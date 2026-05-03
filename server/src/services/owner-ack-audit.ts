@@ -67,6 +67,7 @@ function normalizeMarkerValue(value: string) {
 function shouldAddBooleanStyleMarker(value: string | undefined) {
   if (!value) return false;
   const normalized = normalizeMarkerValue(value);
+  const alnumKey = normalized.replace(/[^a-z0-9]/g, "");
   if (!normalized) return false;
   if (normalized === "yes" || normalized === "required" || normalized === "true") return true;
   if (
@@ -75,8 +76,10 @@ function shouldAddBooleanStyleMarker(value: string | undefined) {
     || normalized === "false"
     || normalized === "n/a"
     || normalized === "na"
+    || alnumKey === "na"
     || normalized === "0"
     || normalized === "not required"
+    || alnumKey === "notrequired"
   ) {
     return false;
   }
@@ -142,7 +145,11 @@ function extractWorkProductMarkers(row: WorkProductRow): OwnerAckDangerousAction
     }
   }
 
-  if (metadata.deployImpact && normalizeActionType(metadata.deployImpact) === null) {
+  if (
+    typeof metadata.deployImpact === "string"
+    && shouldAddBooleanStyleMarker(metadata.deployImpact)
+    && normalizeActionType(metadata.deployImpact) === null
+  ) {
     markers.push({
       actionType: "deploy",
       source: "work_product_metadata",

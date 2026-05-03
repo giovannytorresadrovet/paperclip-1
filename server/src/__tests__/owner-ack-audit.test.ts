@@ -327,4 +327,55 @@ describeEmbeddedPostgres("ownerAckAuditService", () => {
       dangerousActions: [expect.objectContaining({ actionType: "deploy" })],
     });
   });
+
+  it("does not flag schema migration none, but flags schema migration required", async () => {
+    const companyId = await seedCompany();
+    const svc = ownerAckAuditService(db);
+
+    await seedIssue(companyId, {
+      title: "No schema migration",
+      description: "Schema migration: none",
+    });
+    await seedIssue(companyId, {
+      title: "Schema migration required",
+      description: "Schema migration: required",
+    });
+
+    const report = await svc.auditCompany(companyId, new Date("2026-05-02T18:00:00.000Z"));
+    const byTitle = new Map(report.issues.map((issue) => [issue.issue.title, issue]));
+
+    expect(report.summary.totalMarkedIssues).toBe(1);
+    expect(byTitle.has("No schema migration")).toBe(false);
+    expect(byTitle.get("Schema migration required")).toMatchObject({
+      dangerousActions: [expect.objectContaining({ actionType: "schema_migration" })],
+    });
+  });
+
+  it("does not flag external capability n.a", async () => {
+    const companyId = await seedCompany();
+    const svc = ownerAckAuditService(db);
+
+    await seedIssue(companyId, {
+      title: "External capability n.a",
+      description: "External capability: n.a",
+    });
+
+    const report = await svc.auditCompany(companyId, new Date("2026-05-02T18:00:00.000Z"));
+    expect(report.summary.totalMarkedIssues).toBe(0);
+  });
+
+  it("does not infer deploy marker from work-product deployImpact none", async () => {
+    const companyId = await seedCompany();
+    const svc = ownerAckAuditService(db);
+    const issueId = await seedIssue(companyId, { title: "Artifact with deployImpact none" });
+
+    await seedWorkProductMarker(companyId, issueId, {
+      deployImpact: "none",
+    });
+
+    const report = await svc.auditCompany(companyId, new Date("2026-05-02T18:00:00.000Z"));
+    const byTitle = new Map(report.issues.map((issue) => [issue.issue.title, issue]));
+    expect(report.summary.totalMarkedIssues).toBe(0);
+    expect(byTitle.has("Artifact with deployImpact none")).toBe(false);
+  });
 });
