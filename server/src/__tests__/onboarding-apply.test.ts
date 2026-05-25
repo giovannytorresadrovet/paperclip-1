@@ -1,3 +1,8 @@
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import express from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -467,5 +472,31 @@ describeEmbeddedPostgres("onboarding apply", () => {
     expect(res.status).toBe(403);
     expect(res.body).toMatchObject({ error: "Board access required" });
     expect(await db.select().from(companies)).toHaveLength(0);
+  });
+
+  it("initializes git in a non-git project workspace so the starter audit can launch", async () => {
+    const execFileAsync = promisify(execFile);
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "pc-apply-greenfield-"));
+    try {
+      const applyRequest = createApplyRequest();
+      applyRequest.proposedProjectWorkspace.cwd = workspaceDir;
+
+      const res = await request(app(db)).post("/api/onboarding/apply").send(applyRequest);
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(res.body.projectWorkspace.cwd).toBe(workspaceDir);
+
+      // The local adapter git-repo-check now passes because onboarding made the
+      // workspace a real git work tree.
+      const inside = await execFileAsync("git", ["-C", workspaceDir, "rev-parse", "--is-inside-work-tree"]);
+      expect(inside.stdout.trim()).toBe("true");
+
+      const activityRows = await db
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.companyId, res.body.company.id));
+      expect(activityRows.map((row) => row.action)).toContain("onboarding.workspace_git_initialized");
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 });

@@ -16,6 +16,7 @@ import type {
 } from "@paperclipai/shared";
 
 import { logActivity } from "./activity-log.js";
+import { ensureLocalWorkspaceGitRepo } from "./onboarding-workspace-git.js";
 import { DEFAULT_ONBOARDING_SETUP_ITEMS } from "./onboarding-setup-state.js";
 
 const ISSUE_PREFIX_FALLBACK = "CMP";
@@ -75,7 +76,7 @@ export async function applyOnboardingSetup(
 ): Promise<OnboardingApplyResponse> {
   const issuePrefix = await allocateIssuePrefix(db, input.proposedCompany.name);
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const now = new Date();
     const [company] = await tx
       .insert(companies)
@@ -306,4 +307,33 @@ export async function applyOnboardingSetup(
       },
     };
   });
+
+  // Make the new project workspace runnable by local adapters. `codex_local`
+  // (and other local CLIs) refuse to start in a directory that is not a git
+  // work tree, which would otherwise block the very first starter audit on
+  // greenfield/non-git folders. Best-effort and non-fatal: never let this fail
+  // the committed setup, only initialize a real, existing, not-yet-tracked dir.
+  const gitReadiness = await ensureLocalWorkspaceGitRepo(result.projectWorkspace.cwd);
+  if (gitReadiness.status === "initialized" || gitReadiness.status === "failed") {
+    await logActivity(db, {
+      companyId: result.company.id,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action:
+        gitReadiness.status === "initialized"
+          ? "onboarding.workspace_git_initialized"
+          : "onboarding.workspace_git_init_failed",
+      entityType: "project_workspace",
+      entityId: result.projectWorkspace.id,
+      details: {
+        cwd: result.projectWorkspace.cwd,
+        ...(gitReadiness.detail ? { detail: gitReadiness.detail } : {}),
+      },
+    }).catch(() => {
+      // Activity logging is observability-only; never let it surface as an
+      // onboarding failure after the setup has already been committed.
+    });
+  }
+
+  return result;
 }

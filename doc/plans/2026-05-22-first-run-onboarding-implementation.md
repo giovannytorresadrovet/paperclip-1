@@ -861,6 +861,30 @@ Verification:
 - `pnpm exec vitest run server/src/__tests__/issue-onboarding-start-audit-wake-routes.test.ts --reporter verbose`
 - `pnpm --filter @paperclipai/server typecheck`
 
+## Wave 31: Greenfield Workspace Git Readiness
+
+Implementation status: completed locally.
+
+Context: a manual end-to-end smoke test (real local server, isolated instance, throwaway repo) confirmed the full flow works — scan → recommend (AI path times out at 25s and falls back to deterministic as designed) → apply → "Start first audit" wakes the assignee and spawns the real `codex_local` adapter, which read the repo and posted an accurate diagnostics packet. The smoke test surfaced one gap: local CLI adapters (notably `codex_local`) refuse to start with `Not inside a trusted directory and --skip-git-repo-check was not specified` when the workspace is not a git work tree. Greenfield/empty-folder onboarding produces exactly such a directory, which blocks the very first starter audit from launching.
+
+Implemented behavior:
+
+- After the onboarding apply transaction commits, the primary project workspace path is made runnable by local adapters by ensuring it is a git work tree.
+- Rather than bypass the adapter's trust check (`--skip-git-repo-check`), onboarding makes the chosen workspace a real git repository — which is what a Paperclip project workspace should be anyway, since agents commit work there.
+- The step is best-effort and non-fatal by contract: it never throws, never fails the already-committed setup, only initializes a directory that exists and is **not** already inside a git work tree (so a subdirectory of an existing repo is left alone and never nested), and records an activity-log entry (`onboarding.workspace_git_initialized` or `onboarding.workspace_git_init_failed`) for operator observability.
+
+Implemented files:
+
+- `server/src/services/onboarding-workspace-git.ts` (new `ensureLocalWorkspaceGitRepo` helper)
+- `server/src/services/onboarding-apply.ts` (post-commit wiring + activity logging)
+- `server/src/__tests__/onboarding-workspace-git.test.ts` (new unit coverage)
+- `server/src/__tests__/onboarding-apply.test.ts` (new integration case asserting a non-git workspace becomes a git work tree)
+
+Verification:
+
+- `pnpm exec vitest run server/src/__tests__/onboarding-workspace-git.test.ts server/src/__tests__/onboarding-apply.test.ts`
+- `pnpm -r typecheck`
+
 ## Remaining Waves
 
 Next wave:
